@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { loadPlayers, savePlayers } from './storage'
 import type { Player } from './types'
 import './App.css'
@@ -23,6 +23,55 @@ function pickWinner(pool: string[]): string {
   return pool[index]!
 }
 
+type ConfettiPiece = {
+  id: string
+  left: number
+  delay: number
+  duration: number
+  color: string
+  rotate: number
+  drift: number
+  width: number
+  height: number
+  round: boolean
+}
+
+const CONFETTI_COLORS = ['#ffe7ac', '#f05a28', '#3ecfbf', '#ffffff', '#ff8f66', '#7ef0e4']
+
+function createConfetti(count = 90): ConfettiPiece[] {
+  return Array.from({ length: count }, () => {
+    const round = Math.random() > 0.65
+    const size = 10 + Math.random() * 14
+    return {
+      id: createId(),
+      left: Math.random() * 100,
+      delay: Math.random() * 0.55,
+      duration: 2.8 + Math.random() * 2.2,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]!,
+      rotate: Math.random() * 360,
+      drift: -140 + Math.random() * 280,
+      width: round ? size : 8 + Math.random() * 10,
+      height: round ? size : 14 + Math.random() * 18,
+      round,
+    }
+  })
+}
+
+const REEL_ITEM_HEIGHT = 78
+const REEL_SPIN_MS = 3400
+
+function buildReel(names: string[], winnerName: string): string[] {
+  const strip: string[] = []
+  const loops = Math.max(10, Math.ceil(28 / Math.max(names.length, 1)))
+  for (let loop = 0; loop < loops; loop += 1) {
+    for (const entry of names) {
+      strip.push(entry)
+    }
+  }
+  strip.push(winnerName)
+  return strip
+}
+
 export default function App() {
   const [players, setPlayers] = useState<Player[]>(() => loadPlayers())
   const [name, setName] = useState('')
@@ -35,7 +84,12 @@ export default function App() {
   const [winner, setWinner] = useState<string | null>(null)
   const [sorteioHint, setSorteioHint] = useState('')
   const [toast, setToast] = useState<string | null>(null)
+  const [confetti, setConfetti] = useState<ConfettiPiece[]>([])
+  const [reelItems, setReelItems] = useState<string[]>([])
+  const [reelOffset, setReelOffset] = useState(0)
+  const [reelTransition, setReelTransition] = useState(false)
   const spinTimer = useRef<number | null>(null)
+  const confettiTimer = useRef<number | null>(null)
   const nameInputId = useId()
   const chancesInputId = useId()
 
@@ -46,7 +100,10 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (spinTimer.current !== null) {
-        window.clearInterval(spinTimer.current)
+        window.clearTimeout(spinTimer.current)
+      }
+      if (confettiTimer.current !== null) {
+        window.clearTimeout(confettiTimer.current)
       }
     }
   }, [])
@@ -99,9 +156,36 @@ export default function App() {
     setPlayers([])
     setWinner(null)
     setDisplayName(null)
+    setConfetti([])
+    setReelItems([])
+    setReelOffset(0)
+    setReelTransition(false)
     setSorteioHint('')
     setConfirmClear(false)
     setListOpen(false)
+  }
+
+  function revealWinner(chosen: string) {
+    if (spinTimer.current !== null) {
+      window.clearTimeout(spinTimer.current)
+      spinTimer.current = null
+    }
+
+    setDisplayName(chosen)
+    setWinner(chosen)
+    setSpinning(false)
+    setReelTransition(false)
+    setReelItems([])
+    setReelOffset(0)
+    setConfetti(createConfetti())
+
+    if (confettiTimer.current !== null) {
+      window.clearTimeout(confettiTimer.current)
+    }
+    confettiTimer.current = window.setTimeout(() => {
+      setConfetti([])
+      confettiTimer.current = null
+    }, 5200)
   }
 
   function handleSortear() {
@@ -113,33 +197,35 @@ export default function App() {
       return
     }
 
-    setSorteioHint('')
-    setWinner(null)
-    setSpinning(true)
-
     const chosen = pickWinner(pool)
     const names = players.map((player) => player.name)
-    let tick = 0
-    const totalTicks = 28
+    const strip = buildReel(names, chosen)
+    const finalOffset = -(strip.length - 1) * REEL_ITEM_HEIGHT
+
+    setSorteioHint('')
+    setWinner(null)
+    setDisplayName(null)
+    setConfetti([])
+    setReelItems(strip)
+    setReelTransition(false)
+    setReelOffset(0)
+    setSpinning(true)
 
     if (spinTimer.current !== null) {
-      window.clearInterval(spinTimer.current)
+      window.clearTimeout(spinTimer.current)
+      spinTimer.current = null
     }
 
-    spinTimer.current = window.setInterval(() => {
-      tick += 1
-      setDisplayName(names[tick % names.length] ?? chosen)
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setReelTransition(true)
+        setReelOffset(finalOffset)
+      })
+    })
 
-      if (tick >= totalTicks) {
-        if (spinTimer.current !== null) {
-          window.clearInterval(spinTimer.current)
-          spinTimer.current = null
-        }
-        setDisplayName(chosen)
-        setWinner(chosen)
-        setSpinning(false)
-      }
-    }, 90)
+    spinTimer.current = window.setTimeout(() => {
+      revealWinner(chosen)
+    }, REEL_SPIN_MS + 80)
   }
 
   const totalEntries = players.reduce((sum, player) => sum + player.chances, 0)
@@ -226,13 +312,34 @@ export default function App() {
             className={`result-stage${winner && !spinning ? ' is-winner' : ''}${spinning ? ' is-spinning' : ''}`}
             aria-live="polite"
           >
-            {displayName ? (
+            {winner && !spinning ? (
+              <p className="congrats-title">PARABÉNS!</p>
+            ) : null}
+
+            {spinning || (reelItems.length > 0 && !winner) ? (
+              <div className="reel-window" aria-hidden={false}>
+                <div
+                  className={`reel-strip${reelTransition ? ' is-spinning' : ''}`}
+                  style={{
+                    transform: `translate3d(0, ${reelOffset}px, 0)`,
+                    transitionDuration: reelTransition ? `${REEL_SPIN_MS}ms` : '0ms',
+                  }}
+                >
+                  {reelItems.map((entry, index) => (
+                    <div key={`${entry}-${index}`} className="reel-item">
+                      {entry}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : displayName ? (
               <p className="result-name">{displayName}</p>
             ) : (
               <p className="result-placeholder">O nome sorteado aparece aqui</p>
             )}
+
             {winner && !spinning ? (
-              <p className="result-caption">foi a pessoa sorteada!</p>
+              <p className="result-caption">o prêmio é seu!</p>
             ) : null}
           </div>
         </section>
@@ -342,6 +449,27 @@ export default function App() {
           >
             ×
           </button>
+        </div>
+      ) : null}
+
+      {confetti.length > 0 ? (
+        <div className="confetti-layer" aria-hidden="true">
+          {confetti.map((piece) => (
+            <span
+              key={piece.id}
+              className={`confetti-piece${piece.round ? ' is-round' : ''}`}
+              style={{
+                left: `${piece.left}%`,
+                width: `${piece.width}px`,
+                height: `${piece.height}px`,
+                backgroundColor: piece.color,
+                animationDelay: `${piece.delay}s`,
+                animationDuration: `${piece.duration}s`,
+                '--confetti-rotate': `${piece.rotate}deg`,
+                '--confetti-drift': `${piece.drift}px`,
+              } as CSSProperties}
+            />
+          ))}
         </div>
       ) : null}
     </div>
