@@ -291,7 +291,7 @@ export default function App() {
           <div className="draw-actions">
             <button
               type="button"
-              className="btn btn-sortear"
+              className={`btn btn-sortear${spinning || winner ? ' is-drawing' : ''}`}
               onClick={handleSortear}
               disabled={spinning}
             >
