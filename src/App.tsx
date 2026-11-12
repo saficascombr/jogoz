@@ -116,6 +116,10 @@ export default function App() {
 
   function handleAdd(event: FormEvent) {
     event.preventDefault()
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+
     const trimmed = name.trim()
     const parsedChances = Number.parseInt(chances, 10)
 
@@ -262,6 +266,7 @@ export default function App() {
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Ex.: Giovanna"
                 autoComplete="off"
+                enterKeyHint="done"
               />
             </div>
             <div className="field field-chances">
@@ -274,6 +279,7 @@ export default function App() {
                 value={chances}
                 onChange={(event) => setChances(event.target.value)}
                 placeholder="10"
+                enterKeyHint="done"
               />
             </div>
             <button type="submit" className="btn btn-add">
