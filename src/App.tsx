@@ -1,0 +1,349 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { loadPlayers, savePlayers } from './storage'
+import type { Player } from './types'
+import './App.css'
+
+function createId(): string {
+  return crypto.randomUUID()
+}
+
+function buildPool(players: Player[]): string[] {
+  const pool: string[] = []
+  for (const player of players) {
+    for (let i = 0; i < player.chances; i += 1) {
+      pool.push(player.name)
+    }
+  }
+  return pool
+}
+
+function pickWinner(pool: string[]): string {
+  const index = Math.floor(Math.random() * pool.length)
+  return pool[index]!
+}
+
+export default function App() {
+  const [players, setPlayers] = useState<Player[]>(() => loadPlayers())
+  const [name, setName] = useState('')
+  const [chances, setChances] = useState('1')
+  const [formError, setFormError] = useState('')
+  const [listOpen, setListOpen] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [spinning, setSpinning] = useState(false)
+  const [displayName, setDisplayName] = useState<string | null>(null)
+  const [winner, setWinner] = useState<string | null>(null)
+  const [sorteioHint, setSorteioHint] = useState('')
+  const [toast, setToast] = useState<string | null>(null)
+  const spinTimer = useRef<number | null>(null)
+  const nameInputId = useId()
+  const chancesInputId = useId()
+
+  useEffect(() => {
+    savePlayers(players)
+  }, [players])
+
+  useEffect(() => {
+    return () => {
+      if (spinTimer.current !== null) {
+        window.clearInterval(spinTimer.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!toast) return
+    const timeoutId = window.setTimeout(() => setToast(null), 3000)
+    return () => window.clearTimeout(timeoutId)
+  }, [toast])
+
+  function handleAdd(event: FormEvent) {
+    event.preventDefault()
+    const trimmed = name.trim()
+    const parsedChances = Number.parseInt(chances, 10)
+
+    if (!trimmed) {
+      setFormError('Escreva o nome da pessoa.')
+      return
+    }
+    if (!Number.isFinite(parsedChances) || parsedChances < 1) {
+      setFormError('Chances precisa ser um número inteiro de pelo menos 1.')
+      return
+    }
+
+    setPlayers((current) => [
+      ...current,
+      { id: createId(), name: trimmed, chances: parsedChances },
+    ])
+    const label = parsedChances === 1 ? 'entrada' : 'entradas'
+    setToast(`${trimmed} foi incluído com ${parsedChances} ${label} no sorteio`)
+    setName('')
+    setChances('1')
+    setFormError('')
+  }
+
+  function updateChances(id: string, next: number) {
+    if (!Number.isFinite(next) || next < 1) return
+    setPlayers((current) =>
+      current.map((player) =>
+        player.id === id ? { ...player, chances: Math.floor(next) } : player,
+      ),
+    )
+  }
+
+  function removePlayer(id: string) {
+    setPlayers((current) => current.filter((player) => player.id !== id))
+  }
+
+  function clearList() {
+    setPlayers([])
+    setWinner(null)
+    setDisplayName(null)
+    setSorteioHint('')
+    setConfirmClear(false)
+    setListOpen(false)
+  }
+
+  function handleSortear() {
+    if (spinning) return
+
+    const pool = buildPool(players)
+    if (pool.length === 0) {
+      setSorteioHint('Adicione pelo menos uma pessoa antes de sortear.')
+      return
+    }
+
+    setSorteioHint('')
+    setWinner(null)
+    setSpinning(true)
+
+    const chosen = pickWinner(pool)
+    const names = players.map((player) => player.name)
+    let tick = 0
+    const totalTicks = 28
+
+    if (spinTimer.current !== null) {
+      window.clearInterval(spinTimer.current)
+    }
+
+    spinTimer.current = window.setInterval(() => {
+      tick += 1
+      setDisplayName(names[tick % names.length] ?? chosen)
+
+      if (tick >= totalTicks) {
+        if (spinTimer.current !== null) {
+          window.clearInterval(spinTimer.current)
+          spinTimer.current = null
+        }
+        setDisplayName(chosen)
+        setWinner(chosen)
+        setSpinning(false)
+      }
+    }, 90)
+  }
+
+  const totalEntries = players.reduce((sum, player) => sum + player.chances, 0)
+
+  return (
+    <div className="page">
+      <div className="page-glow" aria-hidden="true" />
+
+      <header className="brand">
+        <img
+          className="brand-logo"
+          src="/logo-jogoz.png"
+          alt="JOGOZ — Jogatina em Oz City"
+        />
+      </header>
+
+      <main className="main">
+        <section className="add-section" aria-labelledby="add-heading">
+          <h2 id="add-heading" className="section-title">
+            Adicionar jogador
+          </h2>
+          <p className="section-copy">
+            Cada vitória vale +1 chance. Coloque o nome e quantas vezes ele entra
+            no sorteio.
+          </p>
+
+          <form className="add-form" onSubmit={handleAdd}>
+            <div className="field">
+              <label htmlFor={nameInputId}>Nome</label>
+              <input
+                id={nameInputId}
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Ex.: Giovanna"
+                autoComplete="off"
+              />
+            </div>
+            <div className="field field-chances">
+              <label htmlFor={chancesInputId}>Chances</label>
+              <input
+                id={chancesInputId}
+                type="number"
+                min={1}
+                step={1}
+                value={chances}
+                onChange={(event) => setChances(event.target.value)}
+                placeholder="10"
+              />
+            </div>
+            <button type="submit" className="btn btn-add">
+              Adicionar novo jogador
+            </button>
+          </form>
+          {formError ? <p className="form-error">{formError}</p> : null}
+        </section>
+
+        <section className="draw-section" aria-labelledby="draw-heading">
+          <h2 id="draw-heading" className="visually-hidden">
+            Sorteio
+          </h2>
+
+          <div className="draw-actions">
+            <button
+              type="button"
+              className="btn btn-sortear"
+              onClick={handleSortear}
+              disabled={spinning}
+            >
+              {spinning ? 'Sorteando...' : 'SORTEAR'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-list"
+              onClick={() => setListOpen(true)}
+            >
+              Ver lista de nomes
+            </button>
+          </div>
+
+          {sorteioHint ? <p className="form-error">{sorteioHint}</p> : null}
+
+          <div
+            className={`result-stage${winner && !spinning ? ' is-winner' : ''}${spinning ? ' is-spinning' : ''}`}
+            aria-live="polite"
+          >
+            {displayName ? (
+              <p className="result-name">{displayName}</p>
+            ) : (
+              <p className="result-placeholder">O nome sorteado aparece aqui</p>
+            )}
+            {winner && !spinning ? (
+              <p className="result-caption">foi a pessoa sorteada!</p>
+            ) : null}
+          </div>
+        </section>
+      </main>
+
+      <footer className="footer">
+        {!confirmClear ? (
+          <button
+            type="button"
+            className="btn btn-clear"
+            onClick={() => setConfirmClear(true)}
+          >
+            Zerar lista
+          </button>
+        ) : (
+          <div className="clear-confirm" role="group" aria-label="Confirmar zerar lista">
+            <p>Tem certeza que quer fazer isso?</p>
+            <div className="clear-actions">
+              <button type="button" className="btn btn-clear-yes" onClick={clearList}>
+                Sim, zerar
+              </button>
+              <button
+                type="button"
+                className="btn btn-clear-no"
+                onClick={() => setConfirmClear(false)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </footer>
+
+      {listOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setListOpen(false)}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="list-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 id="list-title">Lista de nomes</h2>
+              <button
+                type="button"
+                className="btn btn-close"
+                onClick={() => setListOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+            <p className="modal-summary">
+              {players.length === 0
+                ? 'Ninguém na lista ainda.'
+                : `${players.length} pessoa(s) · ${totalEntries} entrada(s) no sorteio`}
+            </p>
+
+            {players.length > 0 ? (
+              <ul className="player-list">
+                {players.map((player) => (
+                  <li key={player.id} className="player-row">
+                    <span className="player-name">{player.name}</span>
+                    <label className="player-chances">
+                      <span className="visually-hidden">Chances de {player.name}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={player.chances}
+                        onChange={(event) =>
+                          updateChances(
+                            player.id,
+                            Number.parseInt(event.target.value, 10),
+                          )
+                        }
+                      />
+                      <span aria-hidden="true">×</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-remove"
+                      onClick={() => removePlayer(player.id)}
+                    >
+                      Remover
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div className="toast" role="status">
+          <p className="toast-message">{toast}</p>
+          <button
+            type="button"
+            className="btn btn-toast-close"
+            onClick={() => setToast(null)}
+            aria-label="Fechar confirmação"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
